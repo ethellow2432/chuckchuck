@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://firestore.googleapis.com; base-uri 'none'; form-action 'none'">
+<title>척척 공지 게시판</title>
+<meta name="description" content="척척의 공지사항을 모아 둔 게시판입니다.">
+<style>
+  :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --ink: #151922; --ink2: #5a6272; --line: #e1e4ea; --accent: #3355e0; --soft: #e9eeff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14171c; --card: #1c2027; --ink: #eceff5; --ink2: #a3abba; --line: #2a303a; --accent: #7f97ff; --soft: #232b45; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; line-height: 1.65; background: var(--bg); color: var(--ink); }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 80px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { flex: 1; min-width: 200px; margin: 0; font-size: 26px; }
+  h1 small { display: block; font-size: 14px; font-weight: 400; color: var(--ink2); }
+  .open { padding: 9px 16px; border-radius: 10px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; font-size: 14px; }
+  .tools { display: flex; gap: 8px; margin-bottom: 14px; }
+  input, select { font: inherit; font-size: 15px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
+  input { flex: 1; min-width: 0; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  li.is-open { border-color: var(--accent); }
+  .head { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 14px 16px; border: 0; background: none; color: inherit; font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
+  .head b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .head time { flex: none; color: var(--ink2); font-size: 13px; }
+  .pin { flex: none; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: var(--accent); font-size: 12px; font-weight: 600; }
+  .body { margin: 0; padding: 0 16px 16px; font-size: 15.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .body a { color: var(--accent); }
+  .foot { display: flex; gap: 12px; padding: 0 16px 14px; font-size: 13px; }
+  .foot button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+  .msg { padding: 28px 16px; text-align: center; color: var(--ink2); }
+  .msg button { margin-top: 10px; font: inherit; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  footer { margin-top: 28px; font-size: 13px; color: var(--ink2); }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1><span id="t-title">공지 게시판</span><small>척척</small></h1>
+  <a class="open" id="t-open" href="./">척척 열기</a>
+</header>
+<div class="tools">
+  <input id="q" type="search" placeholder="검색" aria-label="검색">
+  <select id="lang" aria-label="언어"></select>
+</div>
+<div id="list" aria-live="polite"><p class="msg">…</p></div>
+<footer><a href="about.html" id="t-about">척척 소개</a> · <a href="privacy.html" id="t-privacy">개인정보처리방침</a></footer>
+</main>
+<script>
+(() => {
+  const PROJECT = 'chuckchuckproject';
+  const URL_ = `https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents/chukchuk_public/notice`;
+  const LANGS = [['ko', '한국어'], ['en', 'English'], ['ja', '日本語'], ['zh', '简体中文'], ['zh-TW', '繁體中文'], ['vi', 'Tiếng Việt'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'], ['id', 'Bahasa Indonesia'], ['th', 'ไทย'], ['ru', 'Русский']];
+  const UI = {
+    ko: { title: '공지 게시판', open: '척척 열기', search: '검색', auto: '자동', empty: '아직 올라온 공지가 없어요.', none: '찾는 공지가 없어요.', fail: '공지를 불러오지 못했어요.', retry: '다시 시도', pin: '공지', copy: '주소 복사', copied: '복사했어요', original: '원문 보기', translated: '번역 보기', about: '척척 소개', privacy: '개인정보처리방침' },
+    en: { title: 'Announcements', open: 'Open 척척', search: 'Search', auto: 'Auto', empty: 'No announcements yet.', none: 'No matching announcements.', fail: 'Could not load announcements.', retry: 'Try again', pin: 'Pinned', copy: 'Copy link', copied: 'Copied', original: 'Show original', translated: 'Show translation', about: 'About', privacy: 'Privacy Policy' },
+  };
+  const $ = (id) => document.getElementById(id);
+  let posts = null;
+  let failed = false;
+  let openId = decodeURIComponent(location.hash.slice(1));
+  let choice = '';
+  try { choice = localStorage.getItem('chukchuk.board.lang') || ''; } catch {}
+  const showOriginal = new Set();
+
+  // 브라우저 언어에 맞는 번역을 고른다 (앱의 고르는 방식과 같다)
+  function auto() {
+    for (const raw of navigator.languages?.length ? navigator.languages : [navigator.language || 'ko']) {
+      const l = String(raw).toLowerCase();
+      if (l.startsWith('ko')) return 'ko';
+      if (l.startsWith('zh')) return /tw|hk|mo|hant/.test(l) ? 'zh-TW' : 'zh';
+      const base = l.split('-')[0];
+      if (LANGS.some(([id]) => id === base)) return base;
+    }
+    return 'en';
+  }
+  const lang = () => choice || auto();
+  const ui = () => UI[lang() === 'ko' ? 'ko' : 'en'];
+  function textOf(p) {
+    const l = lang();
+    if (l === 'ko' || showOriginal.has(p.id)) return p.text;
+    return p.tr?.[l] || (l === 'zh-TW' && p.tr?.zh) || (l === 'zh' && p.tr?.['zh-TW']) || p.tr?.en || p.text;
+  }
+  const split = (text) => { const lines = String(text).trim().split('\n'); return { title: lines[0].trim(), body: lines.slice(1).join('\n').trim() }; };
+  const date = (at) => new Date(at).toLocaleDateString(lang(), { year: 'numeric', month: 'short', day: 'numeric' });
+
+  function el(tag, props = {}, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) k === 'class' ? (n.className = v) : k.startsWith('on') ? n.addEventListener(k.slice(2), v) : n.setAttribute(k, v);
+    for (const kid of kids) n.append(kid);
+    return n;
+  }
+  // 글 안의 주소만 링크로 바꾼다 (나머지는 글자 그대로)
+  function linked(text) {
+    const p = el('p', { class: 'body' });
+    let last = 0;
+    for (const m of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+      p.append(text.slice(last, m.index));
+      const url = m[0].replace(/[.,)!?]+$/, '');
+      p.append(el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, url));
+      last = m.index + url.length;
+    }
+    p.append(text.slice(last));
+    return p;
+  }
+
+  function render() {
+    const t = ui();
+    document.documentElement.lang = lang();
+    document.title = `척척 ${t.title}`;
+    $('t-title').textContent = t.title;
+    $('t-open').textContent = t.open;
+    $('t-about').textContent = t.about;
+    $('t-privacy').textContent = t.privacy;
+    $('q').placeholder = t.search;
+    $('q').setAttribute('aria-label', t.search);
+    const box = $('list');
+    box.replaceChildren();
+    if (failed) return box.append(el('p', { class: 'msg' }, t.fail, el('br'), el('button', { onclick: load }, t.retry)));
+    if (!posts) return box.append(el('p', { class: 'msg' }, '…'));
+    const q = $('q').value.trim().toLowerCase();
+    const shown = posts.filter((p) => !q || textOf(p).toLowerCase().includes(q) || p.text.toLowerCase().includes(q));
+    if (!shown.length) return box.append(el('p', { class: 'msg' }, posts.length ? t.none : t.empty));
+    const list = el('ul');
+    for (const p of shown) {
+      const { title, body } = split(textOf(p));
+      const open = openId === p.id;
+      const head = el('button', { class: 'head', 'aria-expanded': String(open), onclick: () => { openId = open ? '' : p.id; history.replaceState(null, '', openId ? `#${openId}` : location.pathname); render(); } });
+      if (p.banner) head.append(el('span', { class: 'pin' }, t.pin));
+      head.append(el('b', {}, title), el('time', { datetime: new Date(p.at).toISOString() }, date(p.at)));
+      const li = el('li', { id: `post-${p.id}`, class: open ? 'is-open' : '' }, head);
+      if (open) {
+        li.append(linked(body || title));
+        const foot = el('div', { class: 'foot' });
+        const copy = el('button', { onclick: async () => { try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}#${p.id}`); copy.textContent = t.copied; } catch {} } }, t.copy);
+        foot.append(copy);
+        if (lang() !== 'ko' && textOf({ ...p, id: '' }) !== p.text) foot.append(el('button', { onclick: () => { showOriginal.has(p.id) ? showOriginal.delete(p.id) : showOriginal.add(p.id); render(); } }, showOriginal.has(p.id) ? t.translated : t.original));
+        li.append(foot);
+      }
+      list.append(li);
+    }
+    box.append(list);
+  }
+
+  function fillLangs() {
+    const s = $('lang');
+    s.replaceChildren(el('option', { value: '' }, `${ui().auto} (${LANGS.find(([id]) => id === auto())[1]})`), ...LANGS.map(([id, name]) => el('option', { value: id }, name)));
+    s.value = choice;
+  }
+
+  async function load() {
+    failed = false;
+    posts = null;
+    render();
+    try {
+      const res = await fetch(URL_, { cache: 'no-store' });
+      if (res.status === 404) posts = [];
+      else if (!res.ok) throw new Error(String(res.status));
+      else {
+        const o = JSON.parse((await res.json()).fields?.data?.stringValue || '{}');
+        const raw = Array.isArray(o.posts) ? o.posts : o.text ? [{ ...o, banner: true }] : [];
+        posts = raw.filter((p) => p && typeof p.text === 'string' && p.text.trim()).map((p) => ({ id: String(p.id || `n${p.at}`), text: p.text, tr: p.tr && typeof p.tr === 'object' ? p.tr : {}, at: Number(p.at) || 0, banner: !!p.banner })).sort((a, b) => b.banner - a.banner || b.at - a.at);
+      }
+    } catch {
+      failed = true;
+    }
+    render();
+    if (openId) document.getElementById(`post-${openId}`)?.scrollIntoView({ block: 'start' });
+  }
+
+  $('q').addEventListener('input', render);
+  $('lang').addEventListener('change', (e) => { choice = e.target.value; try { localStorage.setItem('chukchuk.board.lang', choice); } catch {} showOriginal.clear(); fillLangs(); render(); });
+  addEventListener('hashchange', () => { openId = decodeURIComponent(location.hash.slice(1)); render(); });
+  fillLangs();
+  load();
+})();
+</script>
+</body>
+</html>
